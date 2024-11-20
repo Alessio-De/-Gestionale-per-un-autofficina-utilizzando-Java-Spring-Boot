@@ -1,0 +1,399 @@
+autofficina/
+│
+├── src/
+│   ├── main/
+│   │   ├── java/
+│   │   │   └── com/
+│   │   │       └── autofficina/
+│   │   │           ├── controller/
+│   │   │           ├── model/
+│   │   │           ├── repository/
+│   │   │           ├── service/
+│   │   │           └── AutoofficinaApplication.java
+│   │   │
+│   │   └── resources/
+│   │       ├── application.properties
+│   │       └── templates/
+│   │
+│   └── test/
+│       └── java/
+│           └── com/
+│               └── autofficina/
+│
+├── pom.xml
+└── README.md
+
+```
+
+i componenti principali del progetto:
+
+1. Modello di Entità (Model)
+```java
+package com.autofficina.model;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+import java.math.BigDecimal;
+
+// Entità Cliente
+@Entity
+public class Cliente {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String nome;
+
+    @Column(nullable = false)
+    private String cognome;
+
+    @Column(nullable = false)
+    private String telefono;
+
+    @Column(nullable = false)
+    private String email;
+}
+
+// Entità Veicolo
+@Entity
+public class Veicolo {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String marca;
+
+    @Column(nullable = false)
+    private String modello;
+
+    @Column(nullable = false)
+    private String targa;
+
+    @ManyToOne
+    @JoinColumn(name = "cliente_id", nullable = false)
+    private Cliente proprietario;
+}
+
+// Entità Intervento
+@Entity
+public class Intervento {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne
+    @JoinColumn(name = "veicolo_id", nullable = false)
+    private Veicolo veicolo;
+
+    @Column(nullable = false)
+    private String descrizione;
+
+    @Column(nullable = false)
+    private BigDecimal costo;
+
+    @Column(nullable = false)
+    private LocalDateTime dataInizio;
+
+    @Column
+    private LocalDateTime dataFine;
+
+    @Enumerated(EnumType.STRING)
+    private StatoIntervento stato;
+
+    // Enum per lo stato dell'intervento
+    public enum StatoIntervento {
+        IN_ATTESA, 
+        IN_CORSO, 
+        COMPLETATO, 
+        FATTURATO
+    }
+}
+
+// Entità Ricambio
+@Entity
+public class Ricambio {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String nome;
+
+    @Column(nullable = false)
+    private String codice;
+
+    @Column(nullable = false)
+    private BigDecimal prezzo;
+
+    @Column(nullable = false)
+    private Integer quantitaInMagazzino;
+}
+
+```
+
+2. Repository per l'accesso ai dati
+```java
+package com.autofficina.repository;
+
+import com.autofficina.model.*;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+// Repository per Cliente
+@Repository
+public interface ClienteRepository extends JpaRepository<Cliente, Long> {
+    // Metodi personalizzati per la ricerca
+    Cliente findByEmail(String email);
+    List<Cliente> findByCognome(String cognome);
+}
+
+// Repository per Veicolo
+@Repository
+public interface VeicoloRepository extends JpaRepository<Veicolo, Long> {
+    List<Veicolo> findByProprietario(Cliente cliente);
+    Veicolo findByTarga(String targa);
+}
+
+// Repository per Intervento
+@Repository
+public interface InterventoRepository extends JpaRepository<Intervento, Long> {
+    List<Intervento> findByVeicolo(Veicolo veicolo);
+    List<Intervento> findByStato(Intervento.StatoIntervento stato);
+}
+
+// Repository per Ricambio
+@Repository
+public interface RicambioRepository extends JpaRepository<Ricambio, Long> {
+    Ricambio findByCodice(String codice);
+    List<Ricambio> findByQuantitaInMagazzinoLessThan(Integer soglia);
+}
+
+```
+
+3. Servizi di Business Logic
+```java
+package com.autofficina.service;
+
+import com.autofficina.model.*;
+import com.autofficina.repository.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Service
+public class AutoofficinaService {
+    @Autowired
+    private ClienteRepository clienteRepository;
+    
+    @Autowired
+    private VeicoloRepository veicoloRepository;
+    
+    @Autowired
+    private InterventoRepository interventoRepository;
+    
+    @Autowired
+    private RicambioRepository ricambioRepository;
+
+    // Gestione Cliente
+    @Transactional
+    public Cliente registraCliente(Cliente cliente) {
+        return clienteRepository.save(cliente);
+    }
+
+    // Gestione Veicolo
+    @Transactional
+    public Veicolo registraVeicolo(Veicolo veicolo) {
+        return veicoloRepository.save(veicolo);
+    }
+
+    // Avvio Intervento
+    @Transactional
+    public Intervento avviaIntervento(Veicolo veicolo, String descrizione) {
+        Intervento intervento = new Intervento();
+        intervento.setVeicolo(veicolo);
+        intervento.setDescrizione(descrizione);
+        intervento.setDataInizio(LocalDateTime.now());
+        intervento.setStato(Intervento.StatoIntervento.IN_CORSO);
+        return interventoRepository.save(intervento);
+    }
+
+    // Completamento Intervento
+    @Transactional
+    public Intervento completaIntervento(Long interventoId, List<Ricambio> ricambiUtilizzati) {
+        Intervento intervento = interventoRepository.findById(interventoId)
+            .orElseThrow(() -> new RuntimeException("Intervento non trovato"));
+        
+        // Calcolo costo totale
+        BigDecimal costoTotale = ricambiUtilizzati.stream()
+            .map(Ricambio::getPrezzo)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+        
+        intervento.setCosto(costoTotale);
+        intervento.setDataFine(LocalDateTime.now());
+        intervento.setStato(Intervento.StatoIntervento.COMPLETATO);
+
+        // Aggiornamento magazzino ricambi
+        for (Ricambio ricambio : ricambiUtilizzati) {
+            ricambio.setQuantitaInMagazzino(ricambio.getQuantitaInMagazzino() - 1);
+            ricambioRepository.save(ricambio);
+        }
+
+        return interventoRepository.save(intervento);
+    }
+
+    // Verifica disponibilità ricambi
+    public List<Ricambio> verificaRicambiEsaurimento() {
+        return ricambioRepository.findByQuantitaInMagazzinoLessThan(5);
+    }
+}
+
+```
+
+4. Controller REST
+```java
+package com.autofficina.controller;
+
+import com.autofficina.model.*;
+import com.autofficina.service.AutoofficinaService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/autofficina")
+public class AutoofficinaController {
+    @Autowired
+    private AutoofficinaService autoofficinaService;
+
+    // Endpoint per registrazione cliente
+    @PostMapping("/cliente")
+    public ResponseEntity<Cliente> registraCliente(@RequestBody Cliente cliente) {
+        Cliente nuovoCliente = autoofficinaService.registraCliente(cliente);
+        return ResponseEntity.ok(nuovoCliente);
+    }
+
+    // Endpoint per registrazione veicolo
+    @PostMapping("/veicolo")
+    public ResponseEntity<Veicolo> registraVeicolo(@RequestBody Veicolo veicolo) {
+        Veicolo nuovoVeicolo = autoofficinaService.registraVeicolo(veicolo);
+        return ResponseEntity.ok(nuovoVeicolo);
+    }
+
+    // Endpoint per avvio intervento
+    @PostMapping("/intervento/avvia")
+    public ResponseEntity<Intervento> avviaIntervento(
+        @RequestParam Long veicoloId, 
+        @RequestParam String descrizione
+    ) {
+        Veicolo veicolo = // logica per recuperare il veicolo
+        Intervento intervento = autoofficinaService.avviaIntervento(veicolo, descrizione);
+        return ResponseEntity.ok(intervento);
+    }
+
+    // Endpoint per completamento intervento
+    @PostMapping("/intervento/completa")
+    public ResponseEntity<Intervento> completaIntervento(
+        @RequestParam Long interventoId,
+        @RequestBody List<Ricambio> ricambiUtilizzati
+    ) {
+        Intervento interventoCompletato = autoofficinaService.completaIntervento(interventoId, ricambiUtilizzati);
+        return ResponseEntity.ok(interventoCompletato);
+    }
+
+    // Endpoint per verifica ricambi in esaurimento
+    @GetMapping("/ricambi/esaurimento")
+    public ResponseEntity<List<Ricambio>> verificaRicampiEsaurimento() {
+        List<Ricambio> ricampiEsauriti = autoofficinaService.verificaRicambiEsaurimento();
+        return ResponseEntity.ok(ricampiEsauriti);
+    }
+}
+
+```
+
+5. Configurazione Principale
+```java
+package com.autofficina;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+
+@SpringBootApplication
+@EnableJpaRepositories
+public class AutoofficinaApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(AutoofficinaApplication.class, args);
+    }
+}
+
+```
+
+6. File di Configurazione
+```properties
+# Configurazione Database
+spring.datasource.url=jdbc:mysql://localhost:3306/autofficina
+spring.datasource.username=root
+spring.datasource.password=password
+
+# Configurazione Hibernate
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=true
+
+# Configurazione Server
+server.port=8080
+
+# Log
+logging.level.org.springframework=INFO
+logging.level.com.autofficina=DEBUG
+
+```
+
+Descrizione Dettagliata del Progetto:
+
+### Architettura del Gestionale
+
+Il gestionale per l'autofficina è stato progettato seguendo l'architettura tipica di un'applicazione Spring Boot, suddivisa in layer ben definiti:
+
+1. **Model (Modello)**: 
+   - Definisce le entità principali del sistema
+   - Include Cliente, Veicolo, Intervento e Ricambio
+   - Utilizza JPA per la mappatura oggetto-relazionale
+
+2. **Repository**: 
+   - Fornisce metodi di accesso ai dati
+   - Eredita da JpaRepository per operazioni CRUD
+   - Implementa query personalizzate per ricerche specifiche
+
+3. **Service (Servizio)**: 
+   - Contiene la logica di business
+   - Gestisce le transazioni con `@Transactional`
+   - Coordina le operazioni tra diversi repository
+
+4. **Controller**: 
+   - Espone API REST per interazione esterna
+   - Gestisce richieste HTTP 
+   - Utilizza ResponseEntity per restituire risposte strutturate
+
+### Funzionalità Principali
+
+- Registrazione clienti
+- Gestione veicoli
+- Avvio e completamento interventi
+- Tracciamento ricambi utilizzati
+- Verifica disponibilità ricambi
+
+### Tecnologie Utilizzate
+
+- Java 17
+- Spring Boot
+- Spring Data JPA
+- Hibernate
+- MySQL (configurabile)
+- REST API
+
